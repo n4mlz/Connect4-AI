@@ -1,6 +1,5 @@
 node_modules
-target
 dist
-apps/web/public/solver
 *.local
 *.tsbuildinfo
+public/solver

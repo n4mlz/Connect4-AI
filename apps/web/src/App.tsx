@@ -15,18 +15,35 @@ import {
   type Player,
   winningCells,
 } from "./game";
-import { loadGame, type SavedGame, saveGame } from "./storage";
+import { type GameMode, loadGame, type SavedGame, saveGame } from "./storage";
 
-const initialGame: SavedGame = {
+const makeInitialGame = (mode: GameMode): SavedGame => ({
   history: [createBoard()],
   currentPlayer: "red",
-};
+  moves: [],
+  mode,
+});
+
+const initialGame = makeInitialGame("human");
+
+function aiPlayer(mode: GameMode): Player | null {
+  if (mode === "ai-first") return "red";
+  if (mode === "ai-second") return "yellow";
+  return null;
+}
 
 export default function App() {
   const [game, setGame] = useState<SavedGame>(() => loadGame() ?? initialGame);
   const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
   const suppressClick = useRef(false);
   const animationTimer = useRef<number | undefined>(undefined);
+  const workerRef = useRef<Worker | null>(null);
+  const requestId = useRef(0);
+  const requestedPosition = useRef("");
+  const playRef = useRef<(column: number, fromAi?: boolean) => void>(
+    () => undefined,
+  );
+  const [aiThinking, setAiThinking] = useState(false);
   const [animatedMove, setAnimatedMove] = useState<[number, number] | null>(
     null,
   );
@@ -43,6 +60,36 @@ export default function App() {
   const draw = !winner && isBoardFull(board);
   const finished = Boolean(winner || draw);
   useEffect(() => saveGame(game), [game]);
+  const computer = aiPlayer(game.mode);
+
+  useEffect(() => {
+    const worker = new Worker(new URL("./ai.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    worker.onmessage = ({
+      data,
+    }: MessageEvent<{
+      type: string;
+      id: number;
+      column?: number;
+      message?: string;
+    }>) => {
+      if (data.id !== requestId.current) return;
+      setAiThinking(false);
+      if (
+        data.type === "result" &&
+        data.column !== undefined &&
+        data.column >= 0
+      )
+        playRef.current(data.column, true);
+      if (data.type === "error") console.error(data.message);
+    };
+    workerRef.current = worker;
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
 
   const updateHoveredColumn = (event: React.PointerEvent<HTMLDivElement>) => {
     if (finished) return;
@@ -66,8 +113,8 @@ export default function App() {
     }
   };
 
-  const play = (column: number) => {
-    if (finished) return;
+  const play = (column: number, fromAi = false) => {
+    if (finished || (!fromAi && computer === game.currentPlayer)) return;
     const next = dropPiece(board, column, game.currentPlayer);
     if (next) {
       setAnimatedMove(findLastMove(board, next));
@@ -80,15 +127,61 @@ export default function App() {
       setGame({
         history: [...game.history, next],
         currentPlayer: otherPlayer(game.currentPlayer),
+        moves: [...game.moves, column],
+        mode: game.mode,
       });
     }
   };
+  useEffect(() => {
+    playRef.current = play;
+  });
+
+  useEffect(() => {
+    if (
+      game.mode === "human" ||
+      computer !== game.currentPlayer ||
+      finished ||
+      animatedMove
+    )
+      return;
+    const positionKey = `${game.mode}:${game.moves.join("")}`;
+    if (requestedPosition.current === positionKey) return;
+    requestedPosition.current = positionKey;
+    requestId.current += 1;
+    setAiThinking(true);
+    workerRef.current?.postMessage({
+      type: "think",
+      id: requestId.current,
+      history: game.moves,
+      solverUrl: new URL(
+        `${import.meta.env.BASE_URL}solver/solver.js`,
+        window.location.origin,
+      ).href,
+      timeMs: 3_000,
+      maxDepth: 42,
+    });
+  }, [
+    animatedMove,
+    computer,
+    finished,
+    game.currentPlayer,
+    game.mode,
+    game.moves,
+  ]);
+
   const undo = () => {
     if (game.history.length > 1) {
+      requestId.current += 1;
+      requestedPosition.current = "";
+      setAiThinking(false);
+      const count = game.mode === "human" || game.moves.length < 2 ? 1 : 2;
+      const moves = game.moves.slice(0, -count);
       setAnimatedMove(null);
       setGame({
-        history: game.history.slice(0, -1),
-        currentPlayer: otherPlayer(game.currentPlayer),
+        history: game.history.slice(0, -count),
+        currentPlayer: moves.length % 2 === 0 ? "red" : "yellow",
+        moves,
+        mode: game.mode,
       });
     }
   };
@@ -98,6 +191,14 @@ export default function App() {
       return;
     }
     play(column);
+  };
+  const startGame = (mode: GameMode) => {
+    requestId.current += 1;
+    requestedPosition.current = "";
+    setAiThinking(false);
+    setAnimatedMove(null);
+    setHoveredColumn(null);
+    setGame(makeInitialGame(mode));
   };
   const status = winner
     ? `${winner === "red" ? "赤" : "黄"}の勝ち！`
@@ -113,6 +214,30 @@ export default function App() {
   return (
     <main className="page-shell">
       <section className="game-card" aria-label="Connect Four">
+        <fieldset className="mode-selector">
+          <legend className="visually-hidden">対戦モード</legend>
+          <button
+            className={game.mode === "human" ? "selected" : ""}
+            onClick={() => startGame("human")}
+            type="button"
+          >
+            対人戦
+          </button>
+          <button
+            className={game.mode === "ai-first" ? "selected" : ""}
+            onClick={() => startGame("ai-first")}
+            type="button"
+          >
+            AIが先手
+          </button>
+          <button
+            className={game.mode === "ai-second" ? "selected" : ""}
+            onClick={() => startGame("ai-second")}
+            type="button"
+          >
+            AIが後手
+          </button>
+        </fieldset>
         <header className="header">
           <div>
             <p className="eyebrow">CLASSIC TWO PLAYER GAME</p>
@@ -124,7 +249,7 @@ export default function App() {
             className={`turn-indicator ${winner ?? (draw ? "draw" : game.currentPlayer)}`}
             aria-live="polite"
           >
-            <span className="mini-disc" /> {status}
+            <span className="mini-disc" /> {aiThinking ? "AIが考え中…" : status}
           </div>
         </header>
         <div
@@ -182,7 +307,7 @@ export default function App() {
             className="primary-button"
             onClick={() => {
               setAnimatedMove(null);
-              setGame(initialGame);
+              setGame(makeInitialGame(game.mode));
             }}
             type="button"
           >

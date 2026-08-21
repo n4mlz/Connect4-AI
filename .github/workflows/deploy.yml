@@ -27,6 +27,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
       - name: Install dependencies
         run: npm ci
       - name: Verify
@@ -36,7 +42,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist
+          path: ./apps/web/dist
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

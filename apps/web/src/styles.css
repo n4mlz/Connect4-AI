@@ -29,6 +29,49 @@ button {
   padding: clamp(24px, 5vw, 46px);
   box-shadow: 0 20px 60px #1834580d;
 }
+.mode-selector {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-bottom: 28px;
+  padding: 4px;
+  border: 1px solid #e6ebf2;
+  border-radius: 12px;
+  background: #f7f9fc;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.mode-selector button {
+  border: 0;
+  border-radius: 8px;
+  color: #8290a4;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 9px 6px;
+  transition:
+    color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease;
+}
+.mode-selector button:hover {
+  color: #53647c;
+}
+.mode-selector button.selected {
+  color: #294f9e;
+  background: #ffffff;
+  box-shadow: 0 2px 7px #18345812;
+}
 .header {
   display: flex;
   align-items: flex-end;
@@ -283,6 +326,9 @@ h1 span {
     flex-direction: column;
     margin-bottom: 22px;
     gap: 14px;
+  }
+  .mode-selector {
+    margin-bottom: 22px;
   }
   .board-wrap {
     padding: 8px;
