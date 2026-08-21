@@ -43,7 +43,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.15.0 --locked
+        run: |
+          if wasm-pack --version 2>/dev/null | grep -q '^wasm-pack 0.15.0'; then
+            echo "Using cached wasm-pack 0.15.0"
+          else
+            cargo install wasm-pack --version 0.15.0 --locked --force
+          fi
       - name: Install dependencies
         run: npm ci
       - name: Verify
