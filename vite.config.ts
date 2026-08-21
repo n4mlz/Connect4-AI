@@ -3,5 +3,5 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
-  base: process.env.GITHUB_ACTIONS ? "/connect4-web/" : "/",
+  base: process.env.GITHUB_ACTIONS ? "/Connect4-AI/" : "/",
 });
