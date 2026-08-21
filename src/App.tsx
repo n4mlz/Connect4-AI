@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   type Board,
+  COLUMNS,
   createBoard,
   dropPiece,
   isBoardFull,
@@ -17,6 +24,12 @@ const initialGame: SavedGame = {
 
 export default function App() {
   const [game, setGame] = useState<SavedGame>(() => loadGame() ?? initialGame);
+  const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
+  const suppressClick = useRef(false);
+  const animationTimer = useRef<number | undefined>(undefined);
+  const [animatedMove, setAnimatedMove] = useState<[number, number] | null>(
+    null,
+  );
   const board = game.history.at(-1) ?? createBoard();
   const previousBoard = game.history.at(-2);
   const lastMove = previousBoard ? findLastMove(previousBoard, board) : null;
@@ -31,27 +44,70 @@ export default function App() {
   const finished = Boolean(winner || draw);
   useEffect(() => saveGame(game), [game]);
 
+  const updateHoveredColumn = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (finished) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const column = Math.floor(
+      ((event.clientX - bounds.left) / bounds.width) * COLUMNS,
+    );
+    setHoveredColumn(Math.max(0, Math.min(COLUMNS - 1, column)));
+  };
+  const startPointerTracking = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateHoveredColumn(event);
+  };
+  const endPointerTracking = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    if (hoveredColumn !== null) {
+      suppressClick.current = true;
+      play(hoveredColumn);
+      setHoveredColumn(null);
+    }
+  };
+
   const play = (column: number) => {
     if (finished) return;
     const next = dropPiece(board, column, game.currentPlayer);
-    if (next)
+    if (next) {
+      setAnimatedMove(findLastMove(board, next));
+      if (animationTimer.current) window.clearTimeout(animationTimer.current);
+      animationTimer.current = window.setTimeout(() => {
+        setAnimatedMove(null);
+        animationTimer.current = undefined;
+      }, 450);
+      setHoveredColumn(null);
       setGame({
         history: [...game.history, next],
         currentPlayer: otherPlayer(game.currentPlayer),
       });
+    }
   };
   const undo = () => {
-    if (game.history.length > 1)
+    if (game.history.length > 1) {
+      setAnimatedMove(null);
       setGame({
         history: game.history.slice(0, -1),
         currentPlayer: otherPlayer(game.currentPlayer),
       });
+    }
+  };
+  const handleCellClick = (column: number) => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
+    play(column);
   };
   const status = winner
     ? `${winner === "red" ? "赤" : "黄"}の勝ち！`
     : draw
       ? "引き分けです"
       : `${game.currentPlayer === "red" ? "赤" : "黄"}の番`;
+  const landingRow =
+    hoveredColumn === null
+      ? null
+      : board.findLastIndex((row) => row[hoveredColumn] === null);
 
   return (
     <main className="page-shell">
@@ -70,21 +126,38 @@ export default function App() {
             <span className="mini-disc" /> {status}
           </div>
         </header>
-        <div className="board-wrap">
+        <div
+          className="board-wrap"
+          onPointerCancel={() => setHoveredColumn(null)}
+          onPointerDown={startPointerTracking}
+          onPointerLeave={() => setHoveredColumn(null)}
+          onPointerMove={updateHoveredColumn}
+          onPointerUp={endPointerTracking}
+        >
           <div className="board">
             {board.map((row, rowIndex) =>
               row.map((cell, columnIndex) => {
                 const highlighted = wonCells.some(
                   ([r, c]) => r === rowIndex && c === columnIndex,
                 );
+                const isGhost =
+                  landingRow === rowIndex && hoveredColumn === columnIndex;
+                const isLastMove =
+                  lastMove?.[0] === rowIndex && lastMove?.[1] === columnIndex;
+                const isAnimatedMove =
+                  animatedMove?.[0] === rowIndex &&
+                  animatedMove?.[1] === columnIndex;
+                const isPendingWin =
+                  highlighted && animatedMove && !isAnimatedMove;
                 return (
                   <button
-                    className={`cell ${cell ?? "empty"} ${highlighted ? "winner" : ""}`}
+                    className={`cell ${cell ?? "empty"} ${isGhost ? `ghost ${game.currentPlayer}` : ""} ${highlighted ? "winner" : ""} ${isPendingWin ? "pending-win" : ""} ${isLastMove ? "last-move" : ""} ${isAnimatedMove ? "dropping" : ""}`}
                     key={`${rowIndex}-${columnIndex}`}
-                    onClick={() => play(columnIndex)}
+                    onClick={() => handleCellClick(columnIndex)}
                     aria-label={`${columnIndex + 1}列、${rowIndex + 1}行${cell ? `、${cell === "red" ? "赤" : "黄"}` : "、空き"}`}
                     disabled={finished || cell !== null}
                     type="button"
+                    style={{ "--drop-rows": rowIndex + 1 } as CSSProperties}
                   >
                     <span />
                   </button>
@@ -104,7 +177,10 @@ export default function App() {
           </button>
           <button
             className="primary-button"
-            onClick={() => setGame(initialGame)}
+            onClick={() => {
+              setAnimatedMove(null);
+              setGame(initialGame);
+            }}
             type="button"
           >
             最初から
@@ -112,9 +188,6 @@ export default function App() {
         </div>
         <p className="hint">列を選んで駒を落としてください</p>
       </section>
-      <footer>
-        LOCAL GAME <span>•</span> 進行状況はこの端末に保存されます
-      </footer>
     </main>
   );
 }

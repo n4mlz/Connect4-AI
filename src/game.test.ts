@@ -32,6 +32,12 @@ describe("Connect Four rules", () => {
     });
     expect(winningCells(diagonal, 3, 2)).toHaveLength(4);
   });
+  it("highlights all lines when one move completes multiple wins", () => {
+    const board = createBoard();
+    for (const column of [1, 2, 3, 4, 5]) board[5][column] = "red";
+    for (const row of [2, 3, 4, 5]) board[row][3] = "red";
+    expect(winningCells(board, 5, 3)).toHaveLength(8);
+  });
   it("detects a full board", () =>
     expect(
       isBoardFull(createBoard().map((row) => row.map(() => "red" as const))),

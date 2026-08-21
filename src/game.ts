@@ -33,6 +33,7 @@ export function winningCells(
     [1, 1],
     [1, -1],
   ];
+  const winning = new Map<string, [number, number]>();
   for (const [dr, dc] of directions) {
     const line: [number, number][] = [[row, column]];
     for (const sign of [-1, 1]) {
@@ -44,9 +45,11 @@ export function winningCells(
         c += dc * sign;
       }
     }
-    if (line.length >= 4) return line;
+    if (line.length >= 4) {
+      for (const cell of line) winning.set(cell.join(","), cell);
+    }
   }
-  return [];
+  return [...winning.values()];
 }
 
 export const isBoardFull = (board: Board) =>
