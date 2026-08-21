@@ -152,14 +152,26 @@ fn mirror_bits(value: u64) -> u64 {
     mirrored
 }
 
-fn canonical_key(position: Position) -> u64 {
+fn canonical_key(position: Position) -> (u64, bool) {
     let direct =
         position.current.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ position.mask.rotate_left(17);
     let mirrored_current = mirror_bits(position.current);
     let mirrored_mask = mirror_bits(position.mask);
     let mirrored =
         mirrored_current.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ mirrored_mask.rotate_left(17);
-    direct.min(mirrored)
+    if direct <= mirrored {
+        (direct, false)
+    } else {
+        (mirrored, true)
+    }
+}
+
+fn mirror_column(column: i8) -> i8 {
+    if column < 0 {
+        column
+    } else {
+        COLS as i8 - 1 - column
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -289,10 +301,18 @@ impl Search {
             return Some(0);
         }
 
-        let key = canonical_key(position);
+        let (key, is_mirrored) = canonical_key(position);
         let original_alpha = alpha;
         let cached = self.table.get(key);
-        let tt_move = cached.best_move;
+        let tt_move = if cached.key == key {
+            if is_mirrored {
+                mirror_column(cached.best_move)
+            } else {
+                cached.best_move
+            }
+        } else {
+            -1
+        };
         if cached.key == key && cached.depth >= depth {
             let score = from_table_score(cached.score, ply);
             match cached.bound {
@@ -317,11 +337,11 @@ impl Search {
             return Some(-(MATE_SCORE - (ply + 2)));
         }
 
-        let ordered = self.order_moves(position, moves, tt_move);
+        let (ordered, count) = self.order_moves(position, moves, tt_move);
         let mut best = i16::MIN + 1;
         let mut best_move = -1;
         let mut first = true;
-        for column in ordered {
+        for &column in ordered.iter().take(count) {
             let child = position.played(position.play_bit(column));
             let score = if first {
                 -self.negamax(child, -beta, -alpha, depth - 1, ply + 1)?
@@ -359,7 +379,11 @@ impl Search {
                 key,
                 score: to_table_score(best, ply),
                 depth,
-                best_move,
+                best_move: if is_mirrored {
+                    mirror_column(best_move)
+                } else {
+                    best_move
+                },
                 bound,
                 generation: self.table.generation,
             },
@@ -367,7 +391,7 @@ impl Search {
         Some(best)
     }
 
-    fn order_moves(&self, position: Position, moves: u64, tt_move: i8) -> [u8; COLS] {
+    fn order_moves(&self, position: Position, moves: u64, tt_move: i8) -> ([u8; COLS], usize) {
         let mut ordered = [0; COLS];
         let mut scores = [i32::MIN; COLS];
         let mut count = 0;
@@ -392,7 +416,7 @@ impl Search {
                 current -= 1;
             }
         }
-        ordered
+        (ordered, count)
     }
 
     fn root(&mut self, position: Position, depth: u8) -> Option<(u8, i16)> {
@@ -415,15 +439,22 @@ impl Search {
         if moves == 0 {
             return None;
         }
-        let cached = self.table.get(canonical_key(position));
-        let ordered = self.order_moves(position, moves, cached.best_move);
+        let (key, is_mirrored) = canonical_key(position);
+        let cached = self.table.get(key);
+        let tt_move = if cached.key == key {
+            if is_mirrored {
+                mirror_column(cached.best_move)
+            } else {
+                cached.best_move
+            }
+        } else {
+            -1
+        };
+        let (ordered, count) = self.order_moves(position, moves, tt_move);
         let mut best = i16::MIN + 1;
         let mut best_column = ordered[0];
         let mut first = true;
-        for column in ordered {
-            if !position.can_play(column) || position.play_bit(column) & moves == 0 {
-                continue;
-            }
+        for &column in ordered.iter().take(count) {
             let child = position.played(position.play_bit(column));
             let score = if first {
                 -self.negamax(child, -beta, -alpha, depth.saturating_sub(1), 1)?
@@ -562,6 +593,8 @@ pub fn best_move(history: &[u8], time_ms: u32, max_depth: u8) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     fn play(history: &[u8]) -> Position {
@@ -585,8 +618,160 @@ mod tests {
     }
 
     #[test]
+    fn non_losing_moves_matches_exhaustive_one_ply_safety() {
+        let mut seed = 0x5eed_u64;
+        for case in 0..256 {
+            let mut position = Position::default();
+            for _ in 0..(case % 20) {
+                let legal = position.legal_moves();
+                if legal == 0 || position.has_previous_win() {
+                    break;
+                }
+                seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                let target = (seed as usize) % legal.count_ones() as usize;
+                let mut remaining = legal;
+                let mut bit = 0;
+                for _ in 0..=target {
+                    bit = remaining & remaining.wrapping_neg();
+                    remaining ^= bit;
+                }
+                position.play((bit.trailing_zeros() as usize / STRIDE) as u8);
+            }
+
+            let opponent = position.mask ^ position.current;
+            let mut expected = 0;
+            let mut legal = position.legal_moves();
+            while legal != 0 {
+                let bit = legal & legal.wrapping_neg();
+                let child_mask = position.mask | bit;
+                let mut replies = Position {
+                    current: opponent,
+                    mask: child_mask,
+                }
+                .legal_moves();
+                let mut opponent_can_win = false;
+                while replies != 0 {
+                    let reply = replies & replies.wrapping_neg();
+                    if alignment(opponent | reply) {
+                        opponent_can_win = true;
+                        break;
+                    }
+                    replies ^= reply;
+                }
+                if !opponent_can_win {
+                    expected |= bit;
+                }
+                legal ^= bit;
+            }
+            assert_eq!(position.non_losing_moves(), expected, "case {case}");
+        }
+    }
+
+    #[test]
+    fn move_ordering_returns_only_the_requested_legal_moves() {
+        let position = play(&[0, 0, 0, 0, 0, 0, 1]);
+        let moves = position.non_losing_moves();
+        let search = Search::new(0);
+        let (ordered, count) = search.order_moves(position, moves, -1);
+        assert_eq!(count, moves.count_ones() as usize);
+        assert!(ordered[..count]
+            .iter()
+            .all(|&column| moves & position.play_bit(column) != 0));
+        for (index, &column) in ordered[..count].iter().enumerate() {
+            assert!(!ordered[..index].contains(&column));
+        }
+    }
+
+    #[test]
+    fn solver_takes_an_immediate_win_instead_of_searching_other_moves() {
+        assert_eq!(best_move(&[0, 6, 0, 6, 0, 5], 20, 8), 0);
+    }
+
+    #[test]
+    fn solver_blocks_the_only_immediate_loss() {
+        assert_eq!(best_move(&[0, 1, 2, 1, 3, 1], 20, 8), 1);
+    }
+
+    #[test]
+    fn mirrored_positions_return_mirrored_tactical_moves() {
+        let mut solver = Solver::default();
+        assert_eq!(solver.best_move(&[0, 6, 0, 6, 0, 5], 20, 8), 0);
+        assert_eq!(solver.best_move(&[6, 0, 6, 0, 6, 1], 20, 8), 6);
+    }
+
+    #[test]
+    fn solver_move_is_optimal_on_near_endgame_positions() {
+        let mut seed = 0xdecafbad_u64;
+        for case in 0..8 {
+            let (position, history) = non_terminal_position(&mut seed, 30);
+            let mut memo = HashMap::new();
+            let expected = exhaustive_outcome(position, &mut memo);
+            let move_column = best_move(&history, 0, 12);
+            let child = position.played(position.play_bit(move_column as u8));
+            assert_eq!(
+                -exhaustive_outcome(child, &mut memo),
+                expected,
+                "case {case}, move {move_column}"
+            );
+        }
+    }
+
+    #[test]
     fn solver_returns_a_legal_move() {
         let column = best_move(&[3, 2, 3, 2], 1, 8);
         assert!((0..7).contains(&column));
+    }
+
+    fn exhaustive_outcome(position: Position, memo: &mut HashMap<(u64, u64), i8>) -> i8 {
+        if position.has_previous_win() {
+            return -1;
+        }
+        if position.mask.count_ones() as usize == COLS * ROWS {
+            return 0;
+        }
+        let key = (position.current, position.mask);
+        if let Some(&outcome) = memo.get(&key) {
+            return outcome;
+        }
+        let mut best = -1;
+        let mut moves = position.legal_moves();
+        while moves != 0 {
+            let bit = moves & moves.wrapping_neg();
+            best = best.max(-exhaustive_outcome(position.played(bit), memo));
+            if best == 1 {
+                break;
+            }
+            moves ^= bit;
+        }
+        memo.insert(key, best);
+        best
+    }
+
+    fn non_terminal_position(seed: &mut u64, target_moves: usize) -> (Position, Vec<u8>) {
+        let mut position = Position::default();
+        let mut history = Vec::with_capacity(target_moves);
+        for _ in 0..target_moves {
+            let mut candidates = [0u8; COLS];
+            let mut count = 0;
+            for column in 0..COLS as u8 {
+                if position.can_play(column)
+                    && !position
+                        .played(position.play_bit(column))
+                        .has_previous_win()
+                {
+                    candidates[count] = column;
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                break;
+            }
+            *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let column = candidates[(*seed as usize) % count];
+            position.play(column);
+            history.push(column);
+        }
+        assert_eq!(position.mask.count_ones() as usize, target_moves);
+        (position, history)
     }
 }
