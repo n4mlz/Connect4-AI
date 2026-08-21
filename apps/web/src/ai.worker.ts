@@ -1,5 +1,9 @@
 type SolverModule = {
   default: (input?: string | URL) => Promise<unknown>;
+  Solver: new () => SolverInstance;
+};
+
+type SolverInstance = {
   best_move: (history: Uint8Array, timeMs: number, maxDepth: number) => number;
 };
 
@@ -37,6 +41,7 @@ type WorkerMessage =
   | { type: "error"; id: number; message: string };
 
 let solver: Promise<SolverModule> | null = null;
+let solverInstance: SolverInstance | null = null;
 let activeSearch = 0;
 
 function loadSolver(url: string): Promise<SolverModule> {
@@ -65,8 +70,9 @@ worker.onmessage = async ({ data }) => {
   try {
     const module = await loadSolver(data.solverUrl);
     if (searchId !== activeSearch) return;
+    solverInstance ??= new module.Solver();
     if (data.type === "think") {
-      const column = module.best_move(
+      const column = solverInstance.best_move(
         Uint8Array.from(data.history),
         data.timeMs,
         data.maxDepth,
@@ -83,7 +89,7 @@ worker.onmessage = async ({ data }) => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         if (searchId !== activeSearch) return;
         const history = [...data.baseHistory, column];
-        const move = module.best_move(
+        const move = solverInstance.best_move(
           Uint8Array.from(history),
           data.timeMs,
           data.maxDepth,

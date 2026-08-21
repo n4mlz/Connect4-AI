@@ -15,13 +15,20 @@ import {
   type Player,
   winningCells,
 } from "./game";
-import { type GameMode, loadGame, type SavedGame, saveGame } from "./storage";
+import {
+  type GameMode,
+  type GameSnapshot,
+  loadGame,
+  type SavedGame,
+  saveGame,
+} from "./storage";
 
 const makeInitialGame = (mode: GameMode): SavedGame => ({
   history: [createBoard()],
   currentPlayer: "red",
   moves: [],
   mode,
+  undoStack: [],
 });
 
 const initialGame = makeInitialGame("human");
@@ -143,6 +150,10 @@ export default function App() {
         currentPlayer: otherPlayer(game.currentPlayer),
         moves: [...game.moves, column],
         mode: game.mode,
+        undoStack:
+          game.mode === "human" || !fromAi || game.moves.length === 0
+            ? [...game.undoStack, toSnapshot(game)]
+            : game.undoStack,
       });
     }
   };
@@ -201,23 +212,19 @@ export default function App() {
   }, [board, computer, finished, game.currentPlayer, game.mode, game.moves]);
 
   const undo = () => {
-    if (game.history.length > 1) {
-      requestId.current += 1;
-      requestedPosition.current = "";
-      ponderingPosition.current = "";
-      ponderCache.current.clear();
-      workerRef.current?.postMessage({ type: "cancel" });
-      setAiThinking(false);
-      const count = game.mode === "human" || game.moves.length < 2 ? 1 : 2;
-      const moves = game.moves.slice(0, -count);
-      setAnimatedMove(null);
-      setGame({
-        history: game.history.slice(0, -count),
-        currentPlayer: moves.length % 2 === 0 ? "red" : "yellow",
-        moves,
-        mode: game.mode,
-      });
-    }
+    const previous = game.undoStack.at(-1);
+    if (!previous) return;
+    requestId.current += 1;
+    requestedPosition.current = "";
+    ponderingPosition.current = "";
+    ponderCache.current.clear();
+    workerRef.current?.postMessage({ type: "cancel" });
+    setAiThinking(false);
+    setAnimatedMove(null);
+    setGame({
+      ...previous,
+      undoStack: game.undoStack.slice(0, -1),
+    });
   };
   const handleCellClick = (column: number) => {
     if (suppressClick.current) {
@@ -235,7 +242,10 @@ export default function App() {
     setAiThinking(false);
     setAnimatedMove(null);
     setHoveredColumn(null);
-    setGame(makeInitialGame(mode));
+    setGame({
+      ...makeInitialGame(mode),
+      undoStack: [...game.undoStack, toSnapshot(game)],
+    });
   };
   const status = winner
     ? `${winner === "red" ? "赤" : "黄"}の勝ち！`
@@ -335,7 +345,7 @@ export default function App() {
           <button
             className="secondary-button"
             onClick={undo}
-            disabled={game.history.length === 1}
+            disabled={game.undoStack.length === 0}
             type="button"
           >
             ↶ <span>1手戻る</span>
@@ -362,4 +372,13 @@ function findLastMove(
     for (let column = 0; column < current[row].length; column++)
       if (previous[row][column] !== current[row][column]) return [row, column];
   return null;
+}
+
+function toSnapshot(game: SavedGame): GameSnapshot {
+  return {
+    history: game.history,
+    currentPlayer: game.currentPlayer,
+    moves: game.moves,
+    mode: game.mode,
+  };
 }

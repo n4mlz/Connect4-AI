@@ -248,6 +248,14 @@ impl Search {
         }
     }
 
+    fn begin(&mut self, time_ms: u32) {
+        self.started_ms = now_ms();
+        self.limit_ms = (time_ms > 0).then_some(time_ms as f64);
+        self.nodes = 0;
+        self.stopped = false;
+        self.table.next_generation();
+    }
+
     fn timed_out(&mut self) -> bool {
         self.nodes += 1;
         if self.nodes & 0xfff == 0 {
@@ -473,8 +481,7 @@ fn from_table_score(score: i16, ply: i16) -> i16 {
     }
 }
 
-#[wasm_bindgen]
-pub fn best_move(history: &[u8], time_ms: u32, max_depth: u8) -> i32 {
+fn search_best_move(search: &mut Search, history: &[u8], time_ms: u32, max_depth: u8) -> i32 {
     let Some(position) = Position::from_history(history) else {
         return -1;
     };
@@ -492,8 +499,7 @@ pub fn best_move(history: &[u8], time_ms: u32, max_depth: u8) -> i32 {
             .find(|&column| position.can_play(column))
             .unwrap_or(0);
     }
-    let mut search = Search::new(time_ms);
-    search.table.next_generation();
+    search.begin(time_ms);
     let remaining = (COLS * ROWS - position.mask.count_ones() as usize) as u8;
     let target_depth = max_depth.min(remaining).max(1);
     let mut previous_score: Option<i16> = None;
@@ -521,6 +527,37 @@ pub fn best_move(history: &[u8], time_ms: u32, max_depth: u8) -> i32 {
         }
     }
     fallback as i32
+}
+
+#[wasm_bindgen]
+pub struct Solver {
+    search: Search,
+}
+
+impl Default for Solver {
+    fn default() -> Self {
+        Self {
+            search: Search::new(0),
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl Solver {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn best_move(&mut self, history: &[u8], time_ms: u32, max_depth: u8) -> i32 {
+        search_best_move(&mut self.search, history, time_ms, max_depth)
+    }
+}
+
+#[wasm_bindgen]
+pub fn best_move(history: &[u8], time_ms: u32, max_depth: u8) -> i32 {
+    let mut search = Search::new(time_ms);
+    search_best_move(&mut search, history, time_ms, max_depth)
 }
 
 #[cfg(test)]

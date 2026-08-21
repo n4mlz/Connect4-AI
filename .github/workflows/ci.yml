@@ -23,8 +23,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - name: Cache Rust and wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/wasm-pack
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/solver/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('crates/solver/Cargo.lock') }}-wasm-pack-0.15.0
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        run: cargo install wasm-pack --version 0.15.0 --locked
       - name: Install dependencies
         run: npm ci
       - name: Check formatting
