@@ -70,7 +70,7 @@ impl Position {
         let mut wins = 0;
         let mut remaining = legal;
         while remaining != 0 {
-            let bit = remaining & remaining.wrapping_neg();
+            let bit = remaining.isolate_lowest_one();
             if alignment(stones | bit) {
                 wins |= bit;
             }
@@ -97,7 +97,7 @@ impl Position {
         let mut safe = 0;
         let mut remaining = legal;
         while remaining != 0 {
-            let bit = remaining & remaining.wrapping_neg();
+            let bit = remaining.isolate_lowest_one();
             let child_mask = self.mask | bit;
             if winning_moves_for(opponent, child_mask) == 0 {
                 safe |= bit;
@@ -411,7 +411,7 @@ impl Search {
         let mut count = 0;
         let mut remaining = moves;
         while remaining != 0 {
-            let bit = remaining & remaining.wrapping_neg();
+            let bit = remaining.isolate_lowest_one();
             let column = (bit.trailing_zeros() as usize / STRIDE) as u8;
             let child = position.played(bit);
             let threats = child.winning_moves(child.mask ^ child.current).count_ones() as i32;
@@ -647,7 +647,7 @@ mod tests {
                 let mut remaining = legal;
                 let mut bit = 0;
                 for _ in 0..=target {
-                    bit = remaining & remaining.wrapping_neg();
+                    bit = remaining.isolate_lowest_one();
                     remaining ^= bit;
                 }
                 position.play((bit.trailing_zeros() as usize / STRIDE) as u8);
@@ -657,7 +657,7 @@ mod tests {
             let mut expected = 0;
             let mut legal = position.legal_moves();
             while legal != 0 {
-                let bit = legal & legal.wrapping_neg();
+                let bit = legal.isolate_lowest_one();
                 let child_mask = position.mask | bit;
                 let mut replies = Position {
                     current: opponent,
@@ -666,7 +666,7 @@ mod tests {
                 .legal_moves();
                 let mut opponent_can_win = false;
                 while replies != 0 {
-                    let reply = replies & replies.wrapping_neg();
+                    let reply = replies.isolate_lowest_one();
                     if alignment(opponent | reply) {
                         opponent_can_win = true;
                         break;
@@ -758,7 +758,7 @@ mod tests {
         let mut best = -1;
         let mut moves = position.legal_moves();
         while moves != 0 {
-            let bit = moves & moves.wrapping_neg();
+            let bit = moves.isolate_lowest_one();
             best = best.max(-exhaustive_outcome(position.played(bit), memo));
             if best == 1 {
                 break;
@@ -817,7 +817,7 @@ mod tests {
 
         let mut moves = position.legal_moves();
         while moves != 0 {
-            let bit = moves & moves.wrapping_neg();
+            let bit = moves.isolate_lowest_one();
             collect_position_keys(position.played(bit), depth + 1, max_depth, keys);
             moves ^= bit;
         }
