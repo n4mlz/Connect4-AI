@@ -5,7 +5,7 @@ const ROWS: usize = 6;
 const STRIDE: usize = 7;
 const MATE_SCORE: i16 = 1_000;
 const CENTER_ORDER: [u8; COLS] = [3, 2, 4, 1, 5, 0, 6];
-const TT_BITS: usize = 18;
+const TT_BITS: usize = 20;
 const TT_SIZE: usize = 1 << TT_BITS;
 
 #[derive(Clone, Copy, Default)]
@@ -152,13 +152,23 @@ fn mirror_bits(value: u64) -> u64 {
     mirrored
 }
 
+fn position_key(position: Position) -> u64 {
+    position.current + position.mask
+}
+
+fn position_hash(key: u64) -> u64 {
+    key.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ key.rotate_left(17)
+}
+
 fn canonical_key(position: Position) -> (u64, bool) {
-    let direct =
-        position.current.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ position.mask.rotate_left(17);
     let mirrored_current = mirror_bits(position.current);
     let mirrored_mask = mirror_bits(position.mask);
-    let mirrored =
-        mirrored_current.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ mirrored_mask.rotate_left(17);
+    let mirrored = Position {
+        current: mirrored_current,
+        mask: mirrored_mask,
+    };
+    let direct = position_key(position);
+    let mirrored = position_key(mirrored);
     if direct <= mirrored {
         (direct, false)
     } else {
@@ -190,6 +200,7 @@ struct Entry {
     best_move: i8,
     bound: Bound,
     generation: u8,
+    valid: bool,
 }
 
 impl Default for Entry {
@@ -201,6 +212,7 @@ impl Default for Entry {
             best_move: -1,
             bound: Bound::Upper,
             generation: 0,
+            valid: false,
         }
     }
 }
@@ -223,7 +235,7 @@ impl TranspositionTable {
     }
 
     fn index(key: u64) -> usize {
-        (key as usize) & (TT_SIZE - 1)
+        (position_hash(key) as usize) & (TT_SIZE - 1)
     }
 
     fn get(&self, key: u64) -> Entry {
@@ -233,7 +245,7 @@ impl TranspositionTable {
     fn store(&mut self, key: u64, entry: Entry) {
         let index = Self::index(key);
         let old = self.entries[index];
-        if old.key == 0 || entry.depth >= old.depth || old.generation != self.generation {
+        if !old.valid || entry.depth >= old.depth || old.generation != self.generation {
             self.entries[index] = entry;
         }
     }
@@ -301,10 +313,11 @@ impl Search {
             return Some(0);
         }
 
-        let (key, is_mirrored) = canonical_key(position);
+        let (canonical, is_mirrored) = canonical_key(position);
         let original_alpha = alpha;
-        let cached = self.table.get(key);
-        let tt_move = if cached.key == key {
+        let cached = self.table.get(canonical);
+        let cache_hit = cached.valid && cached.key == canonical;
+        let tt_move = if cache_hit {
             if is_mirrored {
                 mirror_column(cached.best_move)
             } else {
@@ -313,7 +326,7 @@ impl Search {
         } else {
             -1
         };
-        if cached.key == key && cached.depth >= depth {
+        if cache_hit && cached.depth >= depth {
             let score = from_table_score(cached.score, ply);
             match cached.bound {
                 Bound::Exact => return Some(score),
@@ -374,9 +387,9 @@ impl Search {
             Bound::Exact
         };
         self.table.store(
-            key,
+            canonical,
             Entry {
-                key,
+                key: canonical,
                 score: to_table_score(best, ply),
                 depth,
                 best_move: if is_mirrored {
@@ -386,6 +399,7 @@ impl Search {
                 },
                 bound,
                 generation: self.table.generation,
+                valid: true,
             },
         );
         Some(best)
@@ -439,9 +453,10 @@ impl Search {
         if moves == 0 {
             return None;
         }
-        let (key, is_mirrored) = canonical_key(position);
-        let cached = self.table.get(key);
-        let tt_move = if cached.key == key {
+        let (canonical, is_mirrored) = canonical_key(position);
+        let cached = self.table.get(canonical);
+        let cache_hit = cached.valid && cached.key == canonical;
+        let tt_move = if cache_hit {
             if is_mirrored {
                 mirror_column(cached.best_move)
             } else {
@@ -700,6 +715,13 @@ mod tests {
     }
 
     #[test]
+    fn exact_position_key_distinguishes_reachable_positions() {
+        let mut keys = HashMap::new();
+        collect_position_keys(Position::default(), 0, 6, &mut keys);
+        assert!(keys.len() > 10_000);
+    }
+
+    #[test]
     fn solver_move_is_optimal_on_near_endgame_positions() {
         let mut seed = 0xdecafbad_u64;
         for case in 0..8 {
@@ -773,5 +795,31 @@ mod tests {
         }
         assert_eq!(position.mask.count_ones() as usize, target_moves);
         (position, history)
+    }
+
+    fn collect_position_keys(
+        position: Position,
+        depth: usize,
+        max_depth: usize,
+        keys: &mut HashMap<u64, (u64, u64)>,
+    ) {
+        let key = position_key(position);
+        let value = (position.current, position.mask);
+        if let Some(&existing) = keys.get(&key) {
+            assert_eq!(existing, value, "position key collision for {key:#x}");
+        } else {
+            keys.insert(key, value);
+        }
+
+        if depth == max_depth || position.has_previous_win() {
+            return;
+        }
+
+        let mut moves = position.legal_moves();
+        while moves != 0 {
+            let bit = moves & moves.wrapping_neg();
+            collect_position_keys(position.played(bit), depth + 1, max_depth, keys);
+            moves ^= bit;
+        }
     }
 }

@@ -48,7 +48,6 @@ export default function App() {
   const requestId = useRef(0);
   const requestedPosition = useRef("");
   const ponderingPosition = useRef("");
-  const ponderCache = useRef(new Map<string, number>());
   const playRef = useRef<(column: number, fromAi?: boolean) => void>(
     () => undefined,
   );
@@ -80,17 +79,9 @@ export default function App() {
     }: MessageEvent<{
       type: string;
       id?: number;
-      baseKey?: string;
-      moves?: Record<string, number>;
       column?: number;
       message?: string;
     }>) => {
-      if (data.type === "ponder-result") {
-        if (data.baseKey !== ponderingPosition.current || !data.moves) return;
-        for (const [key, column] of Object.entries(data.moves))
-          ponderCache.current.set(key, column);
-        return;
-      }
       if (data.id !== requestId.current) return;
       setAiThinking(false);
       if (
@@ -173,19 +164,13 @@ export default function App() {
       if (requestedPosition.current === positionKey) return;
       requestedPosition.current = positionKey;
       requestId.current += 1;
-      const cachedColumn = ponderCache.current.get(game.moves.join(","));
-      if (cachedColumn !== undefined) {
-        setAiThinking(false);
-        window.setTimeout(() => playRef.current(cachedColumn, true), 0);
-        return;
-      }
       setAiThinking(true);
       workerRef.current.postMessage({
         type: "think",
         id: requestId.current,
         history: game.moves,
         solverUrl,
-        timeMs: 650,
+        timeMs: 1_500,
         maxDepth: 42,
       });
       return;
@@ -202,7 +187,6 @@ export default function App() {
     workerRef.current.postMessage({
       type: "ponder",
       id: requestId.current,
-      baseKey: positionKey,
       baseHistory: game.moves,
       legalColumns,
       solverUrl,
@@ -217,7 +201,6 @@ export default function App() {
     requestId.current += 1;
     requestedPosition.current = "";
     ponderingPosition.current = "";
-    ponderCache.current.clear();
     workerRef.current?.postMessage({ type: "cancel" });
     setAiThinking(false);
     setAnimatedMove(null);
@@ -237,7 +220,6 @@ export default function App() {
     requestId.current += 1;
     requestedPosition.current = "";
     ponderingPosition.current = "";
-    ponderCache.current.clear();
     workerRef.current?.postMessage({ type: "cancel" });
     setAiThinking(false);
     setAnimatedMove(null);

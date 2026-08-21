@@ -19,7 +19,6 @@ type ThinkRequest = {
 type PonderRequest = {
   type: "ponder";
   id: number;
-  baseKey: string;
   baseHistory: number[];
   legalColumns: number[];
   solverUrl: string;
@@ -32,12 +31,6 @@ type CancelRequest = { type: "cancel" };
 type WorkerMessage =
   | { type: "ready" }
   | { type: "result"; id: number; column: number }
-  | {
-      type: "ponder-result";
-      id: number;
-      baseKey: string;
-      moves: Record<string, number>;
-    }
   | { type: "error"; id: number; message: string };
 
 let solver: Promise<SolverModule> | null = null;
@@ -89,17 +82,11 @@ worker.onmessage = async ({ data }) => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         if (searchId !== activeSearch) return;
         const history = [...data.baseHistory, column];
-        const move = solverInstance.best_move(
+        solverInstance.best_move(
           Uint8Array.from(history),
           data.timeMs,
           data.maxDepth,
         );
-        worker.postMessage({
-          type: "ponder-result",
-          id: data.id,
-          baseKey: data.baseKey,
-          moves: { [history.join(",")]: move },
-        });
       }
     }
   } catch (error) {
