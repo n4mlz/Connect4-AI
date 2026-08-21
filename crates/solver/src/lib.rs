@@ -528,15 +528,55 @@ fn from_table_score(score: i16, ply: i16) -> i16 {
 }
 
 fn search_best_move(search: &mut Search, history: &[u8], time_ms: u32, max_depth: u8) -> i32 {
+    search_best_move_with_stats(search, history, time_ms, max_depth).column
+}
+
+#[derive(Clone, Copy)]
+struct SearchResult {
+    column: i32,
+    depth: u8,
+    evaluation: i32,
+    predicted_empty_cells: i32,
+    predicted_sign: i8,
+    complete: bool,
+}
+
+fn search_best_move_with_stats(
+    search: &mut Search,
+    history: &[u8],
+    time_ms: u32,
+    max_depth: u8,
+) -> SearchResult {
     let Some(position) = Position::from_history(history) else {
-        return -1;
+        return SearchResult {
+            column: -1,
+            depth: 0,
+            evaluation: 0,
+            predicted_empty_cells: 0,
+            predicted_sign: 0,
+            complete: false,
+        };
     };
     if position.mask.count_ones() as usize >= COLS * ROWS {
-        return -1;
+        return SearchResult {
+            column: -1,
+            depth: 0,
+            evaluation: 0,
+            predicted_empty_cells: 0,
+            predicted_sign: 0,
+            complete: false,
+        };
     }
     let legal = position.legal_moves();
     if legal == 0 {
-        return -1;
+        return SearchResult {
+            column: -1,
+            depth: 0,
+            evaluation: 0,
+            predicted_empty_cells: 0,
+            predicted_sign: 0,
+            complete: false,
+        };
     }
     let mut fallback = 3;
     if !position.can_play(fallback) {
@@ -549,6 +589,8 @@ fn search_best_move(search: &mut Search, history: &[u8], time_ms: u32, max_depth
     let remaining = (COLS * ROWS - position.mask.count_ones() as usize) as u8;
     let target_depth = max_depth.min(remaining).max(1);
     let mut previous_score: Option<i16> = None;
+    let mut completed_depth = 0;
+    let mut completed_score = 0;
     for depth in 1..=target_depth {
         let result = if let Some(previous) = previous_score {
             let alpha = previous.saturating_sub(64);
@@ -565,6 +607,8 @@ fn search_best_move(search: &mut Search, history: &[u8], time_ms: u32, max_depth
         if let Some((column, score)) = result {
             fallback = column;
             previous_score = Some(score);
+            completed_depth = depth;
+            completed_score = score;
         } else {
             break;
         }
@@ -572,7 +616,45 @@ fn search_best_move(search: &mut Search, history: &[u8], time_ms: u32, max_depth
             break;
         }
     }
-    fallback as i32
+    let complete = completed_depth >= remaining;
+    let evaluation = if complete {
+        evaluation_value(completed_score, history.len())
+    } else {
+        0
+    };
+    let (predicted_empty_cells, predicted_sign) = if complete {
+        (evaluation.abs(), evaluation.signum() as i8)
+    } else if completed_score != 0 {
+        let predicted = evaluation_value(completed_score, history.len());
+        (predicted.abs(), predicted.signum() as i8)
+    } else {
+        (
+            ((COLS * ROWS) as i32 - history.len() as i32 - completed_depth as i32).max(0),
+            0,
+        )
+    };
+    SearchResult {
+        column: fallback as i32,
+        depth: completed_depth,
+        evaluation,
+        predicted_empty_cells,
+        predicted_sign,
+        complete,
+    }
+}
+
+fn evaluation_value(score: i16, played_plies: usize) -> i32 {
+    if score == 0 {
+        return 0;
+    }
+    let distance = i32::from(MATE_SCORE - score.abs());
+    let empty_cells = (COLS * ROWS) as i32 - played_plies as i32 - distance;
+    let value = empty_cells.max(0);
+    if score > 0 {
+        value
+    } else {
+        -value
+    }
 }
 
 #[wasm_bindgen]
@@ -597,6 +679,23 @@ impl Solver {
 
     pub fn best_move(&mut self, history: &[u8], time_ms: u32, max_depth: u8) -> i32 {
         search_best_move(&mut self.search, history, time_ms, max_depth)
+    }
+
+    pub fn best_move_with_stats(
+        &mut self,
+        history: &[u8],
+        time_ms: u32,
+        max_depth: u8,
+    ) -> Vec<i32> {
+        let result = search_best_move_with_stats(&mut self.search, history, time_ms, max_depth);
+        vec![
+            result.column,
+            i32::from(result.depth),
+            result.evaluation,
+            if result.complete { 1 } else { 0 },
+            result.predicted_empty_cells,
+            i32::from(result.predicted_sign),
+        ]
     }
 }
 
@@ -726,6 +825,9 @@ mod tests {
         let mut seed = 0xdecafbad_u64;
         for case in 0..8 {
             let (position, history) = non_terminal_position(&mut seed, 30);
+            if position.non_losing_moves() == 0 {
+                continue;
+            }
             let mut memo = HashMap::new();
             let expected = exhaustive_outcome(position, &mut memo);
             let move_column = best_move(&history, 0, 12);
@@ -739,9 +841,67 @@ mod tests {
     }
 
     #[test]
+    fn complete_evaluation_sign_matches_exhaustive_outcome() {
+        let mut seed = 0x1234_5678_u64;
+        for case in 0..8 {
+            let (position, history) = non_terminal_position(&mut seed, 30);
+            if position.non_losing_moves() == 0 {
+                continue;
+            }
+            let mut memo = HashMap::new();
+            let expected = exhaustive_outcome(position, &mut memo) as i32;
+            let mut search = Search::new(0);
+            let result = search_best_move_with_stats(&mut search, &history, 0, 12);
+            assert!(
+                result.complete,
+                "case {case} was not completely searched (depth {})",
+                result.depth
+            );
+            assert_eq!(result.evaluation.signum(), expected, "case {case}");
+        }
+    }
+
+    #[test]
+    fn complete_mate_distance_is_preserved_after_the_optimal_move() {
+        let mut seed = 0x2468_ace0_u64;
+        for case in 0..8 {
+            let (position, history) = non_terminal_position(&mut seed, 30);
+            if position.non_losing_moves() == 0 {
+                continue;
+            }
+            let mut search = Search::new(0);
+            let result = search_best_move_with_stats(&mut search, &history, 0, 12);
+            assert!(result.complete, "case {case} was not completely searched");
+            let child = position.played(position.play_bit(result.column as u8));
+            if child.has_previous_win() || child.legal_moves() == 0 {
+                continue;
+            }
+            let mut child_history = history.clone();
+            child_history.push(result.column as u8);
+            let child_result = search_best_move_with_stats(&mut search, &child_history, 0, 12);
+            assert!(
+                child_result.complete,
+                "child case {case} was not completely searched"
+            );
+            assert_eq!(
+                result.evaluation, -child_result.evaluation,
+                "case {case}: optimal move changed the decisive empty-cell count"
+            );
+        }
+    }
+
+    #[test]
     fn solver_returns_a_legal_move() {
         let column = best_move(&[3, 2, 3, 2], 1, 8);
         assert!((0..7).contains(&column));
+    }
+
+    #[test]
+    fn evaluation_uses_empty_cells_at_the_decisive_position() {
+        assert_eq!(evaluation_value(999, 0), 41);
+        assert_eq!(evaluation_value(999, 38), 3);
+        assert_eq!(evaluation_value(-998, 39), -1);
+        assert_eq!(evaluation_value(0, 20), 0);
     }
 
     fn exhaustive_outcome(position: Position, memo: &mut HashMap<(u64, u64), i8>) -> i8 {

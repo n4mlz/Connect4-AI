@@ -1,12 +1,21 @@
 import type { Board, Player } from "./game";
 
-const STORAGE_KEY = "connect4-game-v1";
+const STORAGE_KEY = "connect4-game";
 export type GameMode = "human" | "ai-first" | "ai-second";
+export type AnalysisPoint = {
+  ply: number;
+  depth: number | null;
+  evaluation: number | null;
+  predictedEmptyCells: number | null;
+  predictedSign: number;
+  complete: boolean;
+};
 export type GameSnapshot = {
   history: Board[];
   currentPlayer: Player;
   moves: number[];
   mode: GameMode;
+  analysis: AnalysisPoint[];
 };
 export type SavedGame = GameSnapshot & { undoStack: GameSnapshot[] };
 
@@ -29,9 +38,26 @@ export function loadGame(): SavedGame | null {
         ? value.mode
         : "human";
     const undoStack = Array.isArray(value.undoStack)
-      ? value.undoStack.filter(isGameSnapshot)
+      ? value.undoStack.filter(isGameSnapshot).map((snapshot) => ({
+          ...snapshot,
+          analysis: Array.isArray(snapshot.analysis)
+            ? snapshot.analysis
+                .filter(isAnalysisPoint)
+                .map(normalizeAnalysisPoint)
+            : [],
+        }))
       : [];
-    return { ...value, moves, mode, undoStack };
+    const analysis = Array.isArray(value.analysis)
+      ? value.analysis.filter(isAnalysisPoint).map(normalizeAnalysisPoint)
+      : [];
+    return {
+      history: value.history,
+      currentPlayer: value.currentPlayer,
+      moves,
+      mode,
+      analysis,
+      undoStack,
+    };
   } catch {
     return null;
   }
@@ -68,8 +94,46 @@ function isGameSnapshot(value: unknown): value is GameSnapshot {
     snapshot.history.length > 0 &&
     (snapshot.currentPlayer === "red" || snapshot.currentPlayer === "yellow") &&
     Array.isArray(snapshot.moves) &&
+    (snapshot.analysis === undefined || Array.isArray(snapshot.analysis)) &&
     (snapshot.mode === "human" ||
       snapshot.mode === "ai-first" ||
       snapshot.mode === "ai-second")
   );
+}
+
+function isAnalysisPoint(value: unknown): value is AnalysisPoint {
+  if (!value || typeof value !== "object") return false;
+  const point = value as Partial<AnalysisPoint>;
+  return (
+    typeof point.ply === "number" &&
+    Number.isInteger(point.ply) &&
+    point.ply > 0 &&
+    (point.depth === null || Number.isInteger(point.depth)) &&
+    (point.evaluation === null ||
+      (typeof point.evaluation === "number" &&
+        Number.isFinite(point.evaluation))) &&
+    (point.predictedEmptyCells === null ||
+      point.predictedEmptyCells === undefined ||
+      (typeof point.predictedEmptyCells === "number" &&
+        Number.isFinite(point.predictedEmptyCells))) &&
+    (point.predictedSign === undefined ||
+      (typeof point.predictedSign === "number" &&
+        Number.isFinite(point.predictedSign))) &&
+    (point.complete === undefined || typeof point.complete === "boolean")
+  );
+}
+
+function normalizeAnalysisPoint(point: AnalysisPoint): AnalysisPoint {
+  const complete = point.complete ?? false;
+  return {
+    ...point,
+    complete,
+    evaluation: complete ? point.evaluation : null,
+    predictedEmptyCells:
+      typeof point.predictedEmptyCells === "number"
+        ? point.predictedEmptyCells
+        : null,
+    predictedSign:
+      typeof point.predictedSign === "number" ? point.predictedSign : 0,
+  };
 }

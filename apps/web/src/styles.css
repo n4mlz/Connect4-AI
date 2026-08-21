@@ -286,6 +286,120 @@ h1 span {
   text-align: center;
   margin: 20px 0 0;
 }
+.analysis-section {
+  border-top: 1px solid #edf0f5;
+  margin-top: 24px;
+  padding-top: 16px;
+}
+.analysis-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #53647c;
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  font-weight: 700;
+  justify-content: space-between;
+  padding: 0;
+  width: 100%;
+}
+.analysis-toggle:hover {
+  color: #294f9e;
+}
+.analysis-panel {
+  margin-top: 14px;
+}
+.analysis-summary {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, 1fr);
+  margin-bottom: 8px;
+}
+.analysis-summary div {
+  background: #f7f9fc;
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+.analysis-summary span {
+  color: #8b97a9;
+  display: block;
+  font-size: 10px;
+  margin-bottom: 3px;
+}
+.analysis-summary strong {
+  color: #3568d4;
+  font-size: 16px;
+}
+.analysis-summary strong.red,
+.chart-point.red {
+  color: #dc4e58;
+}
+.analysis-summary strong.yellow,
+.chart-point.yellow {
+  color: #c89500;
+}
+.analysis-chart {
+  display: block;
+  height: auto;
+  overflow: visible;
+  width: 100%;
+}
+.analysis-chart line {
+  stroke-width: 1;
+}
+.chart-grid {
+  stroke: #e7ebf2;
+}
+.chart-zero {
+  stroke: #bcc6d4;
+  stroke-dasharray: 4 4;
+}
+.analysis-chart text {
+  fill: #9aa5b4;
+  font-family: "DM Sans", sans-serif;
+  font-size: 10px;
+}
+.chart-label {
+  fill: #68778d;
+  font-size: 9px;
+}
+.chart-axis-red {
+  fill: #dc4e58;
+}
+.chart-axis-yellow {
+  fill: #c89500;
+}
+.chart-axis-neutral {
+  fill: #9aa5b4;
+}
+.chart-line {
+  fill: none;
+  stroke: #3568d4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.5;
+}
+.chart-point {
+  stroke: white;
+  stroke-width: 2;
+}
+.chart-point.red {
+  fill: #dc4e58;
+}
+.chart-point.yellow {
+  fill: #f0b900;
+}
+.chart-point.neutral {
+  fill: #9aa5b4;
+}
+.analysis-empty,
+.analysis-note {
+  color: #9aa5b4;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 10px 0 0;
+}
 @keyframes pulse {
   to {
     transform: scale(0.9);
