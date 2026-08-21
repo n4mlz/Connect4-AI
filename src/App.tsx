@@ -108,6 +108,7 @@ export default function App() {
     hoveredColumn === null
       ? null
       : board.findLastIndex((row) => row[hoveredColumn] === null);
+  const gameOverVisualReady = finished && !animatedMove;
 
   return (
     <main className="page-shell">
@@ -120,14 +121,14 @@ export default function App() {
             </h1>
           </div>
           <div
-            className={`turn-indicator ${winner ?? game.currentPlayer}`}
+            className={`turn-indicator ${winner ?? (draw ? "draw" : game.currentPlayer)}`}
             aria-live="polite"
           >
             <span className="mini-disc" /> {status}
           </div>
         </header>
         <div
-          className="board-wrap"
+          className={`board-wrap ${gameOverVisualReady ? "game-over" : ""}`}
           onPointerCancel={() => setHoveredColumn(null)}
           onPointerDown={startPointerTracking}
           onPointerLeave={() => setHoveredColumn(null)}
@@ -149,9 +150,11 @@ export default function App() {
                   animatedMove?.[1] === columnIndex;
                 const isPendingWin =
                   highlighted && animatedMove && !isAnimatedMove;
+                const isFaded =
+                  gameOverVisualReady && (!winner || !highlighted);
                 return (
                   <button
-                    className={`cell ${cell ?? "empty"} ${isGhost ? `ghost ${game.currentPlayer}` : ""} ${highlighted ? "winner" : ""} ${isPendingWin ? "pending-win" : ""} ${isLastMove ? "last-move" : ""} ${isAnimatedMove ? "dropping" : ""}`}
+                    className={`cell ${cell ?? "empty"} ${isGhost ? `ghost ${game.currentPlayer}` : ""} ${highlighted ? "winner" : ""} ${isPendingWin ? "pending-win" : ""} ${isLastMove ? "last-move" : ""} ${isAnimatedMove ? "dropping" : ""} ${isFaded ? "faded" : ""}`}
                     key={`${rowIndex}-${columnIndex}`}
                     onClick={() => handleCellClick(columnIndex)}
                     aria-label={`${columnIndex + 1}列、${rowIndex + 1}行${cell ? `、${cell === "red" ? "赤" : "黄"}` : "、空き"}`}
@@ -183,7 +186,7 @@ export default function App() {
             }}
             type="button"
           >
-            最初から
+            {finished ? "もう一度" : "最初から"}
           </button>
         </div>
         <p className="hint">列を選んで駒を落としてください</p>

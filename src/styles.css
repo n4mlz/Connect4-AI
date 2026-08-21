@@ -68,6 +68,9 @@ h1 span {
 .turn-indicator.yellow {
   color: #c89500;
 }
+.turn-indicator.draw {
+  color: #68778d;
+}
 .mini-disc {
   width: 12px;
   height: 12px;
@@ -78,10 +81,19 @@ h1 span {
   background: #3969cc;
   border-radius: 17px;
   padding: 12px;
+  transition:
+    background 0.28s ease,
+    box-shadow 0.28s ease;
   touch-action: none;
   box-shadow:
     inset 0 2px 0 #ffffff26,
     0 10px 20px #2355b31f;
+}
+.board-wrap.game-over {
+  background: #8fa9dd;
+  box-shadow:
+    inset 0 2px 0 #ffffff4d,
+    0 10px 20px #2355b312;
 }
 .board {
   display: grid;
@@ -104,6 +116,13 @@ h1 span {
 }
 .cell.ghost {
   transform: translateY(-3px);
+}
+.cell.faded {
+  background: #ffffff;
+  filter: none;
+}
+.cell.faded span {
+  opacity: 0.64;
 }
 .cell:not(:disabled):hover {
   background: #eef3fb;
