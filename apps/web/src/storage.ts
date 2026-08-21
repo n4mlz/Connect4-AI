@@ -130,10 +130,12 @@ function normalizeAnalysisPoint(point: AnalysisPoint): AnalysisPoint {
     complete,
     evaluation: complete ? point.evaluation : null,
     predictedEmptyCells:
-      typeof point.predictedEmptyCells === "number"
+      complete && typeof point.predictedEmptyCells === "number"
         ? point.predictedEmptyCells
         : null,
     predictedSign:
-      typeof point.predictedSign === "number" ? point.predictedSign : 0,
+      complete && typeof point.predictedSign === "number"
+        ? point.predictedSign
+        : 0,
   };
 }

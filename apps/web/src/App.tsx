@@ -1,10 +1,7 @@
-import {
-  type CSSProperties,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AiStats } from "./ai-types";
+import { AnalysisPanel } from "./analysis-panel";
+import { BoardView } from "./board-view";
 import {
   type Board,
   COLUMNS,
@@ -34,14 +31,6 @@ const makeInitialGame = (mode: GameMode): SavedGame => ({
 });
 
 const initialGame = makeInitialGame("human");
-
-type AiStats = {
-  depth: number;
-  evaluation: number;
-  predictedEmptyCells: number;
-  predictedSign: number;
-  complete: boolean;
-};
 
 function aiPlayer(mode: GameMode): Player | null {
   if (mode === "ai-first") return "red";
@@ -105,7 +94,9 @@ export default function App() {
           const next = {
             depth: data.depth ?? 0,
             evaluation: data.evaluation ?? 0,
-            predictedEmptyCells: data.predictedEmptyCells ?? 0,
+            predictedEmptyCells: data.complete
+              ? (data.predictedEmptyCells ?? null)
+              : null,
             predictedSign: data.predictedSign ?? 0,
             complete: data.complete ?? false,
           };
@@ -124,7 +115,9 @@ export default function App() {
         playRef.current(data.column, true, {
           depth: data.depth ?? 0,
           evaluation: data.evaluation ?? 0,
-          predictedEmptyCells: data.predictedEmptyCells ?? 0,
+          predictedEmptyCells: data.complete
+            ? (data.predictedEmptyCells ?? null)
+            : null,
           predictedSign: data.predictedSign ?? 0,
           complete: data.complete ?? false,
         });
@@ -342,48 +335,23 @@ export default function App() {
             <span className="mini-disc" /> {aiThinking ? "AIが考え中…" : status}
           </div>
         </header>
-        <div
-          className={`board-wrap ${gameOverVisualReady ? "game-over" : ""}`}
+        <BoardView
+          board={board}
+          currentPlayer={game.currentPlayer}
+          hoveredColumn={hoveredColumn}
+          landingRow={landingRow}
+          wonCells={wonCells}
+          lastMove={lastMove}
+          animatedMove={animatedMove}
+          finished={finished}
+          gameOverVisualReady={gameOverVisualReady}
           onPointerCancel={() => setHoveredColumn(null)}
           onPointerDown={startPointerTracking}
           onPointerLeave={() => setHoveredColumn(null)}
           onPointerMove={updateHoveredColumn}
           onPointerUp={endPointerTracking}
-        >
-          <div className="board">
-            {board.map((row, rowIndex) =>
-              row.map((cell, columnIndex) => {
-                const highlighted = wonCells.some(
-                  ([r, c]) => r === rowIndex && c === columnIndex,
-                );
-                const isGhost =
-                  landingRow === rowIndex && hoveredColumn === columnIndex;
-                const isLastMove =
-                  lastMove?.[0] === rowIndex && lastMove?.[1] === columnIndex;
-                const isAnimatedMove =
-                  animatedMove?.[0] === rowIndex &&
-                  animatedMove?.[1] === columnIndex;
-                const isPendingWin =
-                  highlighted && animatedMove && !isAnimatedMove;
-                const isFaded =
-                  gameOverVisualReady && (!winner || !highlighted);
-                return (
-                  <button
-                    className={`cell ${cell ?? "empty"} ${isGhost ? `ghost ${game.currentPlayer}` : ""} ${highlighted ? "winner" : ""} ${isPendingWin ? "pending-win" : ""} ${isLastMove ? "last-move" : ""} ${isAnimatedMove ? "dropping" : ""} ${isFaded ? "faded" : ""}`}
-                    key={`${rowIndex}-${columnIndex}`}
-                    onClick={() => handleCellClick(columnIndex)}
-                    aria-label={`${columnIndex + 1}列、${rowIndex + 1}行${cell ? `、${cell === "red" ? "赤" : "黄"}` : "、空き"}`}
-                    disabled={finished || cell !== null}
-                    type="button"
-                    style={{ "--drop-rows": rowIndex + 1 } as CSSProperties}
-                  >
-                    <span />
-                  </button>
-                );
-              }),
-            )}
-          </div>
-        </div>
+          onCellClick={handleCellClick}
+        />
         <div className="controls">
           <button
             className="secondary-button"
@@ -446,170 +414,4 @@ function toSnapshot(game: SavedGame): GameSnapshot {
     mode: game.mode,
     analysis: game.analysis,
   };
-}
-
-type AnalysisPanelProps = {
-  computer: Player | null;
-  liveAnalysis: AiStats | null;
-  moves: number[];
-  points: AnalysisPoint[];
-};
-
-function AnalysisPanel({
-  computer,
-  liveAnalysis,
-  moves,
-  points,
-}: AnalysisPanelProps) {
-  const latest = [...points].reverse().find((point) => point.depth !== null);
-  const chartPoints = points.filter(
-    (point): point is AnalysisPoint & { evaluation: number } =>
-      point.evaluation !== null,
-  );
-  const current = liveAnalysis
-    ? {
-        complete: liveAnalysis.complete,
-        depth: liveAnalysis.depth,
-        evaluation:
-          liveAnalysis.complete && computer === "red"
-            ? liveAnalysis.evaluation
-            : liveAnalysis.complete
-              ? -liveAnalysis.evaluation
-              : null,
-        predictedEmptyCells: liveAnalysis.predictedEmptyCells,
-        predictedSign:
-          computer === "red"
-            ? liveAnalysis.predictedSign
-            : -liveAnalysis.predictedSign,
-      }
-    : latest;
-  const width = 640;
-  const height = 250;
-  const margin = { top: 18, right: 14, bottom: 38, left: 46 };
-  const chartWidth = width - margin.left - margin.right;
-  const chartHeight = height - margin.top - margin.bottom;
-  const maxPly = Math.max(moves.length, 1);
-  const x = (ply: number) =>
-    margin.left + ((ply - 1) / Math.max(maxPly - 1, 1)) * chartWidth;
-  const y = (evaluation: number) =>
-    margin.top +
-    ((42 - Math.max(-42, Math.min(42, evaluation))) / 84) * chartHeight;
-  const line = chartPoints
-    .map((point) => `${x(point.ply)},${y(point.evaluation)}`)
-    .join(" ");
-  const labelStep = Math.max(1, Math.ceil(maxPly / 8));
-  const labels = Array.from({ length: maxPly }, (_, index) => index + 1).filter(
-    (ply) => ply === 1 || ply === maxPly || ply % labelStep === 0,
-  );
-  const formatEvaluation = (evaluation: number) => String(Math.abs(evaluation));
-  const currentEvaluation =
-    current?.complete && current.evaluation !== null
-      ? current.evaluation
-      : null;
-  const currentSign =
-    currentEvaluation !== null
-      ? Math.sign(currentEvaluation)
-      : (current?.predictedSign ?? 0);
-  const evaluationLabel =
-    currentEvaluation === null
-      ? current?.predictedSign === 1
-        ? "赤が優勢"
-        : current?.predictedSign === -1
-          ? "黄が優勢"
-          : "未確定"
-      : currentEvaluation === 0
-        ? "互角"
-        : currentEvaluation > 0
-          ? "赤が優勢"
-          : "黄が優勢";
-
-  return (
-    <div className="analysis-panel">
-      <div className="analysis-summary">
-        <div>
-          <span>最終探索深度</span>
-          <strong>
-            {!current
-              ? "—"
-              : current.complete
-                ? "完全読み"
-                : `${current.depth}手先`}
-          </strong>
-        </div>
-        <div>
-          <span>盤面評価</span>
-          <strong
-            className={
-              currentSign < 0 ? "yellow" : currentSign > 0 ? "red" : ""
-            }
-          >
-            {!current
-              ? "—"
-              : `${evaluationLabel}${currentEvaluation === null ? (current.predictedEmptyCells === null ? "" : `（予想 ${formatEvaluation(current.predictedEmptyCells)}）`) : `（${formatEvaluation(currentEvaluation)}）`}`}
-          </strong>
-        </div>
-      </div>
-      {chartPoints.length === 0 ? (
-        <p className="analysis-empty">AIが着手すると探索結果が表示されます。</p>
-      ) : (
-        <svg
-          className="analysis-chart"
-          viewBox={`0 0 ${width} ${height}`}
-          role="img"
-          aria-label="AI視点の盤面評価値の推移"
-        >
-          {[42, 0, -42].map((value) => (
-            <g key={value}>
-              <line
-                className={value === 0 ? "chart-zero" : "chart-grid"}
-                x1={margin.left}
-                x2={width - margin.right}
-                y1={y(value)}
-                y2={y(value)}
-              />
-              <text x={margin.left - 8} y={y(value) + 4} textAnchor="end">
-                <tspan
-                  className={
-                    value === 42
-                      ? "chart-axis-red"
-                      : value === -42
-                        ? "chart-axis-yellow"
-                        : "chart-axis-neutral"
-                  }
-                >
-                  {value === 42 ? "赤" : value === -42 ? "黄" : "互角"}
-                </tspan>
-              </text>
-            </g>
-          ))}
-          {line && <polyline className="chart-line" points={line} />}
-          {chartPoints.map((point) => (
-            <circle
-              className={`chart-point ${point.evaluation === 0 ? "neutral" : point.evaluation < 0 ? "yellow" : "red"}`}
-              cx={x(point.ply)}
-              cy={y(point.evaluation)}
-              key={point.ply}
-              r="3.5"
-            />
-          ))}
-          {labels.map((ply) => {
-            return (
-              <text
-                className="chart-label"
-                key={ply}
-                x={x(ply)}
-                y={height - 12}
-                textAnchor="middle"
-              >
-                {ply}
-              </text>
-            );
-          })}
-        </svg>
-      )}
-      <p className="analysis-note">
-        評価値は先手（赤）基準です。赤が上、黄が下になるよう表示しています。
-      </p>
-    </div>
-  );
 }

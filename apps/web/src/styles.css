@@ -393,12 +393,8 @@ h1 span {
 .chart-point.neutral {
   fill: #9aa5b4;
 }
-.analysis-empty,
-.analysis-note {
-  color: #9aa5b4;
-  font-size: 11px;
-  line-height: 1.5;
-  margin: 10px 0 0;
+.chart-point.predicted {
+  opacity: 0.55;
 }
 @keyframes pulse {
   to {
