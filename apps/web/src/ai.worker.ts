@@ -12,12 +12,32 @@ type ThinkRequest = {
   maxDepth: number;
 };
 
+type PonderRequest = {
+  type: "ponder";
+  id: number;
+  baseKey: string;
+  baseHistory: number[];
+  legalColumns: number[];
+  solverUrl: string;
+  timeMs: number;
+  maxDepth: number;
+};
+
+type CancelRequest = { type: "cancel" };
+
 type WorkerMessage =
   | { type: "ready" }
   | { type: "result"; id: number; column: number }
+  | {
+      type: "ponder-result";
+      id: number;
+      baseKey: string;
+      moves: Record<string, number>;
+    }
   | { type: "error"; id: number; message: string };
 
 let solver: Promise<SolverModule> | null = null;
+let activeSearch = 0;
 
 function loadSolver(url: string): Promise<SolverModule> {
   if (!solver) {
@@ -31,21 +51,53 @@ function loadSolver(url: string): Promise<SolverModule> {
 }
 
 const worker = self as unknown as {
-  onmessage: ((event: MessageEvent<ThinkRequest>) => void) | null;
+  onmessage:
+    | ((
+        event: MessageEvent<ThinkRequest | PonderRequest | CancelRequest>,
+      ) => void)
+    | null;
   postMessage: (message: WorkerMessage) => void;
 };
 
 worker.onmessage = async ({ data }) => {
-  if (data.type !== "think") return;
+  const searchId = ++activeSearch;
+  if (data.type === "cancel") return;
   try {
     const module = await loadSolver(data.solverUrl);
-    const column = module.best_move(
-      Uint8Array.from(data.history),
-      data.timeMs,
-      data.maxDepth,
-    );
-    worker.postMessage({ type: "result", id: data.id, column });
+    if (searchId !== activeSearch) return;
+    if (data.type === "think") {
+      const column = module.best_move(
+        Uint8Array.from(data.history),
+        data.timeMs,
+        data.maxDepth,
+      );
+      if (searchId === activeSearch)
+        worker.postMessage({ type: "result", id: data.id, column });
+      return;
+    }
+
+    if (data.legalColumns.length === 0) return;
+    while (searchId === activeSearch) {
+      for (const column of data.legalColumns) {
+        if (searchId !== activeSearch) return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (searchId !== activeSearch) return;
+        const history = [...data.baseHistory, column];
+        const move = module.best_move(
+          Uint8Array.from(history),
+          data.timeMs,
+          data.maxDepth,
+        );
+        worker.postMessage({
+          type: "ponder-result",
+          id: data.id,
+          baseKey: data.baseKey,
+          moves: { [history.join(",")]: move },
+        });
+      }
+    }
   } catch (error) {
+    if (searchId !== activeSearch) return;
     worker.postMessage({
       type: "error",
       id: data.id,

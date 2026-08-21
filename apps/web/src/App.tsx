@@ -40,6 +40,8 @@ export default function App() {
   const workerRef = useRef<Worker | null>(null);
   const requestId = useRef(0);
   const requestedPosition = useRef("");
+  const ponderingPosition = useRef("");
+  const ponderCache = useRef(new Map<string, number>());
   const playRef = useRef<(column: number, fromAi?: boolean) => void>(
     () => undefined,
   );
@@ -70,10 +72,18 @@ export default function App() {
       data,
     }: MessageEvent<{
       type: string;
-      id: number;
+      id?: number;
+      baseKey?: string;
+      moves?: Record<string, number>;
       column?: number;
       message?: string;
     }>) => {
+      if (data.type === "ponder-result") {
+        if (data.baseKey !== ponderingPosition.current || !data.moves) return;
+        for (const [key, column] of Object.entries(data.moves))
+          ponderCache.current.set(key, column);
+        return;
+      }
       if (data.id !== requestId.current) return;
       setAiThinking(false);
       if (
@@ -117,6 +127,10 @@ export default function App() {
     if (finished || (!fromAi && computer === game.currentPlayer)) return;
     const next = dropPiece(board, column, game.currentPlayer);
     if (next) {
+      requestId.current += 1;
+      requestedPosition.current = "";
+      ponderingPosition.current = "";
+      workerRef.current?.postMessage({ type: "cancel" });
       setAnimatedMove(findLastMove(board, next));
       if (animationTimer.current) window.clearTimeout(animationTimer.current);
       animationTimer.current = window.setTimeout(() => {
@@ -137,42 +151,62 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (
-      game.mode === "human" ||
-      computer !== game.currentPlayer ||
-      finished ||
-      animatedMove
-    )
+    if (game.mode === "human" || finished || !workerRef.current) return;
+    const positionKey = `${game.mode}:${game.moves.join(",")}`;
+    const solverUrl = new URL(
+      `${import.meta.env.BASE_URL}solver/solver.js`,
+      window.location.origin,
+    ).href;
+
+    if (computer === game.currentPlayer) {
+      if (requestedPosition.current === positionKey) return;
+      requestedPosition.current = positionKey;
+      requestId.current += 1;
+      const cachedColumn = ponderCache.current.get(game.moves.join(","));
+      if (cachedColumn !== undefined) {
+        setAiThinking(false);
+        window.setTimeout(() => playRef.current(cachedColumn, true), 0);
+        return;
+      }
+      setAiThinking(true);
+      workerRef.current.postMessage({
+        type: "think",
+        id: requestId.current,
+        history: game.moves,
+        solverUrl,
+        timeMs: 650,
+        maxDepth: 42,
+      });
       return;
-    const positionKey = `${game.mode}:${game.moves.join("")}`;
-    if (requestedPosition.current === positionKey) return;
-    requestedPosition.current = positionKey;
+    }
+
+    if (ponderingPosition.current === positionKey) return;
+    ponderingPosition.current = positionKey;
     requestId.current += 1;
-    setAiThinking(true);
-    workerRef.current?.postMessage({
-      type: "think",
+    setAiThinking(false);
+    const legalColumns = Array.from(
+      { length: COLUMNS },
+      (_, column) => column,
+    ).filter((column) => dropPiece(board, column, game.currentPlayer));
+    workerRef.current.postMessage({
+      type: "ponder",
       id: requestId.current,
-      history: game.moves,
-      solverUrl: new URL(
-        `${import.meta.env.BASE_URL}solver/solver.js`,
-        window.location.origin,
-      ).href,
-      timeMs: 3_000,
+      baseKey: positionKey,
+      baseHistory: game.moves,
+      legalColumns,
+      solverUrl,
+      timeMs: 100,
       maxDepth: 42,
     });
-  }, [
-    animatedMove,
-    computer,
-    finished,
-    game.currentPlayer,
-    game.mode,
-    game.moves,
-  ]);
+  }, [board, computer, finished, game.currentPlayer, game.mode, game.moves]);
 
   const undo = () => {
     if (game.history.length > 1) {
       requestId.current += 1;
       requestedPosition.current = "";
+      ponderingPosition.current = "";
+      ponderCache.current.clear();
+      workerRef.current?.postMessage({ type: "cancel" });
       setAiThinking(false);
       const count = game.mode === "human" || game.moves.length < 2 ? 1 : 2;
       const moves = game.moves.slice(0, -count);
@@ -195,6 +229,9 @@ export default function App() {
   const startGame = (mode: GameMode) => {
     requestId.current += 1;
     requestedPosition.current = "";
+    ponderingPosition.current = "";
+    ponderCache.current.clear();
+    workerRef.current?.postMessage({ type: "cancel" });
     setAiThinking(false);
     setAnimatedMove(null);
     setHoveredColumn(null);
@@ -305,10 +342,7 @@ export default function App() {
           </button>
           <button
             className="primary-button"
-            onClick={() => {
-              setAnimatedMove(null);
-              setGame(makeInitialGame(game.mode));
-            }}
+            onClick={() => startGame(game.mode)}
             type="button"
           >
             {finished ? "もう一度" : "最初から"}
